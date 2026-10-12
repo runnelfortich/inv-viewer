@@ -198,8 +198,8 @@ button,input[type=file],select{border-color:#492229;background:#130d0f;color:#f8
 </div>
 <button id="replaceBtn">Replace inventory</button><button id="addBtn">Save as new snapshot</button></div>
 <div id="uploadStatus">Current inventory loaded.</div>
-<div class="tools"><button id="exportCsv">Export results CSV</button><button id="exportJson">Export backup JSON</button><button id="clearHistory">Clear past searches</button></div><div id="history" class="small"></div>
-<div class="tools"><select id="snapshotA"></select><select id="snapshotB"></select><button id="compareBtn">Compare reports</button></div><div id="compareSummary" class="small"></div>
+<div class="tools"><button id="exportCsv">Export results CSV</button><button id="exportJson">Export backup JSON</button><button id="backupCleanBtn" type="button" style="border-color:#ff4653;background:#260d11;color:#ffb6bc">Export Backup + Clean Storage</button><button id="clearHistory">Clear past searches</button></div><div id="history" class="small"></div>
+<div class="tools"><select id="snapshotA" aria-label="Older snapshot"></select><select id="snapshotB" aria-label="Newer snapshot"></select><button id="compareBtn">Compare reports</button></div><div class="tools"><select id="snapshotDelete" aria-label="Choose snapshot to delete"></select><button id="deleteSnapshotBtn" type="button" style="border-color:#a52b38;background:#260d11;color:#ffb6bc">Delete selected snapshot</button></div><p class="small">Deleting a snapshot removes only that saved comparison copy. It does not delete your current inventory. This cannot be undone.</p><div id="compareSummary" class="small"></div>
 <div class="tablewrap mini-table"><table><thead><tr><th>Brand</th><th>Item / Model</th><th class="num">Old</th><th class="num">New</th><th class="num">Diff</th></tr></thead><tbody id="compareBody"></tbody></table></div>
 <p class="small">PDF upload requires internet to load the PDF-reading library. Saved data is local to this browser. Export a JSON backup regularly.</p></details>
 
@@ -208,17 +208,26 @@ button,input[type=file],select{border-color:#492229;background:#130d0f;color:#f8
   const form=document.getElementById('accessForm');
   const input=document.getElementById('accessCode');
   const error=document.getElementById('accessError');
-  form.addEventListener('submit',function(e){
+  form.addEventListener('submit',async function(e){
     e.preventDefault();
-    if(input.value==='331226'){
+    if(input.value!=='331226'){
+      error.textContent='Incorrect code. Please try again.';
+      input.value=''; input.focus(); return;
+    }
+    const submit=form.querySelector('button[type="submit"]');
+    input.disabled=true; submit.disabled=true; submit.textContent='READING MAIN.PDF…';
+    error.style.color='#ffb6bc';
+    error.textContent='Binabasa muna ang main.pdf. Sandali lang…';
+    try{
+      const loaded=window.autoLoadMainPdf ? await window.autoLoadMainPdf() : false;
+      if(!loaded) throw new Error('Hindi nabasa ang main.pdf. Siguraduhing nasa parehong folder ito ng index.html at buksan ang website gamit ang localhost o web hosting.');
+      input.value='';
       document.body.classList.remove('access-locked');
       document.getElementById('accessGate').remove();
-      input.value='';
-      if(window.autoLoadMainPdf) window.autoLoadMainPdf();
-    }else{
-      error.textContent='Incorrect code. Please try again.';
-      input.value='';
-      input.focus();
+      document.getElementById('q').focus();
+    }catch(err){
+      error.textContent=err.message || 'Hindi mabasa ang main.pdf. I-check ang file at internet connection, pagkatapos subukan ulit.';
+      input.disabled=false; submit.disabled=false; submit.textContent='RETRY MAIN.PDF'; input.value=''; input.focus();
     }
   });
 })();
@@ -230,12 +239,44 @@ function fmt(n){return Number(n).toLocaleString("en-PH",{maximumFractionDigits:2
 function read(k,d){try{let v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 let current=read(DBKEY,START_DB), snapshots=read(SNAPKEY,[{id:"initial",date:START_DB.metadata.inventory_date||"2026-10-09",name:START_DB.metadata.source_file||"Original inventory",items:START_DB.items}]), history=read(HISTKEY,[]);
 if(!snapshots.length)snapshots=[{id:"initial",date:current.metadata.inventory_date,name:current.metadata.source_file,items:current.items}];
-function persist(){try{localStorage.setItem(DBKEY,JSON.stringify(current));localStorage.setItem(SNAPKEY,JSON.stringify(snapshots));return true}catch(e){$("uploadStatus").textContent="Storage full. Export backup and remove old snapshots.";return false}}
+function persist(){
+  try{
+    localStorage.setItem(DBKEY,JSON.stringify(current));
+    localStorage.setItem(SNAPKEY,JSON.stringify(snapshots));
+    return true;
+  }catch(e){
+    $("uploadStatus").textContent="Storage is full. Click ‘Export Backup + Clean Storage’ to download a complete backup, then remove older snapshots.";
+    return false;
+  }
+}
 function matches(){let q=$("q").value.trim().toLowerCase();let a=current.items.filter(x=>Number(x.quantity)>0&&(!q||(x.brand+" "+x.item).toLowerCase().includes(q)));a.sort((x,y)=>x.brand.localeCompare(y.brand)||x.item.localeCompare(y.item));return a}
 function render(){let a=matches();$("summary").innerHTML=`<span>${a.length} result(s) <span style="color:#526779">/</span> ${current.items.length} items</span><span>Inventory: ${esc(current.metadata.inventory_date||"unknown")}</span>`;$("tbody").innerHTML=a.map((x,i)=>`<tr style="animation-delay:${Math.min(i,12)*12}ms"><td><span class="brand">${esc(x.brand)}</span></td><td>${esc(x.item)}</td><td class="num"><span class="qty">${fmt(x.quantity)}</span></td></tr>`).join("");$("empty").hidden=!!a.length}
 function runSearch(save=true){if(save){let q=$("q").value.trim();if(q){history=[q,...history.filter(x=>x!==q)].slice(0,15);try{localStorage.setItem(HISTKEY,JSON.stringify(history))}catch(e){}}}renderHistory();render()}
 function renderHistory(){$("history").innerHTML=history.length?"Past searches: "+history.map(x=>`<button data-q="${esc(x)}">${esc(x)}</button>`).join(" "):"No past searches yet."; $("history").querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>{$("q").value=b.dataset.q;render()})}
-function renderSnapshots(){for(let id of ["snapshotA","snapshotB"]){let s=$(id),old=s.value;s.innerHTML=snapshots.map(x=>`<option value="${esc(x.id)}">${esc(x.date)} — ${esc(x.name)}</option>`).join("");if(snapshots.some(x=>x.id===old))s.value=old}if(snapshots.length>1){$("snapshotA").selectedIndex=0;$("snapshotB").selectedIndex=snapshots.length-1}}
+function renderSnapshots(){
+  for(let id of ["snapshotA","snapshotB","snapshotDelete"]){
+    let s=$(id); if(!s)continue;
+    let old=s.value;
+    s.innerHTML=snapshots.map(x=>`<option value="${esc(x.id)}">${esc(x.date)} — ${esc(x.name)} (${(x.items||[]).length} items)</option>`).join("");
+    if(snapshots.some(x=>x.id===old))s.value=old;
+  }
+  if(snapshots.length>1){$("snapshotA").selectedIndex=0;$("snapshotB").selectedIndex=snapshots.length-1}
+  const del=$("deleteSnapshotBtn");
+  if(del)del.disabled=snapshots.length===0;
+}
+function deleteSelectedSnapshot(){
+  const select=$("snapshotDelete"), id=select&&select.value;
+  const target=snapshots.find(x=>String(x.id)===String(id));
+  if(!target){$("uploadStatus").textContent="Choose a saved snapshot first.";return}
+  if(!confirm(`Delete this saved snapshot?\n\n${target.date} — ${target.name}\n${(target.items||[]).length} items\n\nYour current inventory will NOT be deleted.`))return;
+  const previous=snapshots;
+  snapshots=snapshots.filter(x=>String(x.id)!==String(id));
+  if(!persist()){snapshots=previous;renderSnapshots();return}
+  renderSnapshots();
+  $("compareSummary").textContent="";
+  $("compareBody").innerHTML="";
+  $("uploadStatus").textContent=`Deleted snapshot: ${target.name}. Current inventory is unchanged. ${snapshots.length} snapshot(s) remaining.`;
+}
 async function parsePdf(file){
   if(!file)throw Error("Choose a PDF first.");
   if(!window.pdfjsLib)throw Error("PDF reader library did not load. Connect to the internet and reload this page.");
@@ -306,31 +347,87 @@ async function parsePdf(file){
   return {items:unique,pages:pdf.numPages};
 }
 async function upload(mode){let f=$("pdfUpload").files[0];try{$("uploadStatus").textContent="Reading PDF…";let r=await parsePdf(f),date=(f.name.match(/(\d{4}[-_]\d{2}[-_]\d{2}|\d{2}[-_]\d{2}[-_]\d{4})/)||[])[1]||new Date().toISOString().slice(0,10);date=date.replace(/_/g,"-");r.items.forEach(x=>x.inventory_date=date);let next={metadata:{title:"Audiophile Inventory",inventory_date:date,source_file:f.name,record_count:r.items.length,pages:r.pages},items:r.items};if(mode==="replace")current=next;snapshots.push({id:"s"+Date.now(),date,name:f.name,items:r.items});if(!persist())return;renderSnapshots();render();$("uploadStatus").textContent=`Success: ${r.items.length} records extracted. ${mode==="replace"?"Current inventory replaced.":"New snapshot saved."}`}catch(e){$("uploadStatus").textContent="Upload error: "+e.message}}
-$("q").addEventListener("input",()=>runSearch(true));$("replaceBtn").onclick=()=>upload("replace");$("addBtn").onclick=()=>upload("snapshot");$("clearHistory").onclick=()=>{history=[];localStorage.removeItem(HISTKEY);renderHistory()};
-function download(name,content,type){let u=URL.createObjectURL(new Blob([content],{type})),a=document.createElement("a");a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}
+$("q").addEventListener("input",()=>runSearch(true));$("replaceBtn").onclick=()=>upload("replace");$("addBtn").onclick=()=>upload("snapshot");$("clearHistory").onclick=()=>{history=[];localStorage.removeItem(HISTKEY);renderHistory()};$("deleteSnapshotBtn").onclick=deleteSelectedSnapshot;
+function download(name,content,type){
+  const u=URL.createObjectURL(new Blob([content],{type}));
+  const a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),1500);
+}
+function exportBackupAndCleanStorage(){
+  // Download the full data set BEFORE deleting anything from browser storage.
+  const backup={exported_at:new Date().toISOString(),current,snapshots,history};
+  download("mega-inventory-full-backup-"+new Date().toISOString().slice(0,10)+".json",JSON.stringify(backup,null,2),"application/json");
+  // Keep the newest snapshot(s); the downloaded JSON retains every old snapshot.
+  const originalCount=snapshots.length;
+  let cleaned=snapshots.slice(-2);
+  try{
+    localStorage.setItem(SNAPKEY,JSON.stringify(cleaned));
+  }catch(e){
+    // If two snapshots still exceed the quota, keep only the newest one.
+    cleaned=snapshots.slice(-1);
+    try{localStorage.setItem(SNAPKEY,JSON.stringify(cleaned));}
+    catch(e2){
+      // Remove nonessential search history and retry once; current inventory is untouched.
+      try{localStorage.removeItem(HISTKEY);history=[];localStorage.setItem(SNAPKEY,JSON.stringify(cleaned));}
+      catch(e3){$("uploadStatus").textContent="Backup download started, but browser storage is still full. Keep the downloaded JSON backup and clear this site's browser storage manually only if needed.";return;}
+    }
+  }
+  snapshots=cleaned;
+  renderSnapshots();renderHistory();
+  $("uploadStatus").textContent=`Full backup download started. Removed ${originalCount-cleaned.length} older snapshot(s); kept the ${cleaned.length} newest snapshot(s). Current inventory was preserved.`;
+}
 $("exportCsv").onclick=()=>{let cols=["brand","item","quantity","inventory_date","location","source_page","source_file"],cell=v=>`"${String(v??"").replace(/"/g,'""')}"`;download("inventory-search-results.csv",[cols.join(","),...matches().map(x=>cols.map(c=>cell(x[c])).join(","))].join("\r\n"),"text/csv;charset=utf-8")};
-$("exportJson").onclick=()=>download("mega-inventory-backup.json",JSON.stringify({current,snapshots,history},null,2),"application/json");
+$("exportJson").onclick=()=>download("mega-inventory-backup.json",JSON.stringify({exported_at:new Date().toISOString(),current,snapshots,history},null,2),"application/json");
+$("backupCleanBtn").onclick=exportBackupAndCleanStorage;
 $("compareBtn").onclick=()=>{let a=snapshots.find(x=>x.id===$("snapshotA").value),b=snapshots.find(x=>x.id===$("snapshotB").value);if(!a||!b)return;let m=new Map(a.items.map(x=>[x.brand+"|"+x.item,x])),n=new Map(b.items.map(x=>[x.brand+"|"+x.item,x])),keys=[...new Set([...m.keys(),...n.keys()])].sort(),d=keys.map(k=>{let x=m.get(k),y=n.get(k);return {brand:(y||x).brand,item:(y||x).item,old:x?+x.quantity:0,now:y?+y.quantity:0,diff:(y?+y.quantity:0)-(x?+x.quantity:0)}}).filter(x=>x.diff!==0);$("compareSummary").textContent=`${d.length} changed items.`;$("compareBody").innerHTML=d.map(x=>`<tr><td>${esc(x.brand)}</td><td>${esc(x.item)}</td><td class="num">${fmt(x.old)}</td><td class="num">${fmt(x.now)}</td><td class="num">${x.diff>0?"+":""}${fmt(x.diff)}</td></tr>`).join("")};
 let s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";s.onload=()=>{pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"};document.head.appendChild(s);
-// Automatically load main.pdf from the same folder after the access code is accepted.
+// Read main.pdf BEFORE revealing the inventory page, so the first visible results
+// come from the actual PDF instead of the embedded fallback database.
 window.autoLoadMainPdf=async function(){
   const status=document.getElementById("uploadStatus");
   try{
-    status.textContent="Loading main.pdf automatically…";
-    // Wait briefly for PDF.js CDN script to finish loading.
-    for(let i=0;i<80&&!window.pdfjsLib;i++) await new Promise(resolve=>setTimeout(resolve,100));
-    if(!window.pdfjsLib) throw new Error("PDF reader did not load. Check your internet connection and reload.");
+    // Wait for PDF.js CDN script to finish loading.
+    for(let i=0;i<100&&!window.pdfjsLib;i++) await new Promise(resolve=>setTimeout(resolve,100));
+    if(!window.pdfjsLib) throw new Error("PDF reader did not load. Check your internet connection and retry.");
     const response=await fetch(new URL("main.pdf",window.location.href),{cache:"no-store"});
-    if(!response.ok) throw new Error("main.pdf not found. Put main.pdf in the same folder as this HTML file.");
+    if(!response.ok) throw new Error("main.pdf not found. Put main.pdf in the same folder as index.html.");
     const blob=await response.blob();
+    if(!blob.size) throw new Error("main.pdf is empty or could not be downloaded.");
     const file=new File([blob],"main.pdf",{type:"application/pdf"});
+    const parsed=await parsePdf(file);
+    const dateMatch=file.name.match(/(\d{4}[-_]\d{2}[-_]\d{2}|\d{2}[-_]\d{2}[-_]\d{4})/);
+    const date=(dateMatch?dateMatch[1].replace(/_/g,"-"):new Date().toISOString().slice(0,10));
+    parsed.items.forEach(x=>{x.inventory_date=date;x.source_file=file.name;});
+    const next={metadata:{title:"Audiophile Inventory",inventory_date:date,source_file:file.name,record_count:parsed.items.length,pages:parsed.pages,note:"Loaded automatically from main.pdf before displaying inventory."},items:parsed.items};
+    // Update the in-memory database first. The page can still work if browser storage is full.
+    current=next;
+    const existingIndex=snapshots.findIndex(x=>x.name==="main.pdf" || x.id==="auto-main-pdf");
+    const mainSnapshot={id:"auto-main-pdf",date,name:"main.pdf",items:parsed.items};
+    if(existingIndex>=0) snapshots[existingIndex]=mainSnapshot; else snapshots.push(mainSnapshot);
+    let saved=false;
+    try{
+      localStorage.setItem(DBKEY,JSON.stringify(current));
+      // Keep only the latest two snapshots to reduce storage usage.
+      snapshots=snapshots.slice(-2);
+      localStorage.setItem(SNAPKEY,JSON.stringify(snapshots));
+      saved=true;
+    }catch(storageError){
+      // Still show the PDF-derived data for this session, even if storage is full.
+      try{localStorage.removeItem(HISTKEY);history=[];}catch(_){}
+      try{snapshots=snapshots.slice(-1);localStorage.setItem(SNAPKEY,JSON.stringify(snapshots));}catch(_){}
+    }
     const transfer=new DataTransfer(); transfer.items.add(file);
     document.getElementById("pdfUpload").files=transfer.files;
-    document.getElementById("dropFileName").textContent="main.pdf (loaded automatically)";
+    document.getElementById("dropFileName").textContent=`main.pdf · ${parsed.pages} page(s) · ${parsed.items.length} records`;
     document.getElementById("dropTitle").textContent="Default PDF loaded";
     document.getElementById("pdfDropZone").classList.add("has-file");
-    await upload("replace");
-  }catch(err){status.textContent="Automatic main.pdf load failed: "+err.message;}
+    renderSnapshots(); renderHistory(); render();
+    if(status) status.textContent=`main.pdf read successfully: ${parsed.items.length} records from ${parsed.pages} pages.${saved?" Saved to this browser.":" Storage is full; data is loaded for this session but could not be fully saved."}`;
+    return true;
+  }catch(err){
+    if(status) status.textContent="Automatic main.pdf load failed: "+err.message;
+    throw err;
+  }
 };
 
 // Delight layer: keyboard-first search, instant brand picks, highlighted matches, and row-to-search.
